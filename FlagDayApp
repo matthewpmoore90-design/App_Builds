@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Flag Status – Federal & Michigan</title>
+<meta name="theme-color" content="#0b5fff">
+<style>
+  :root { --bg:#0b0f14; --card:#121722; --muted:#8aa0b8; --ok:#28a745; --warn:#ffc107; --bad:#dc3545; --accent:#0b5fff; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Arial, sans-serif; background:var(--bg); color:#e8f0ff; }
+  header { padding:16px; background:#0d1320; border-bottom:1px solid #1c2534; }
+  h1 { margin:0 0 4px; font-size:18px; }
+  .sub { color:var(--muted); font-size:12px; }
+  main { padding:16px; display:grid; gap:16px; max-width:800px; margin:0 auto; }
+  .row { display:grid; gap:12px; grid-template-columns: 1fr; }
+  @media(min-width:720px){ .row { grid-template-columns: 1fr 1fr; } }
+  .card { background:var(--card); border:1px solid #223047; border-radius:12px; padding:14px; }
+  .card h2 { margin:0 0 8px; font-size:16px; }
+  .status { display:flex; align-items:center; gap:10px; margin:8px 0 6px; }
+  .pill { padding:4px 10px; border-radius:999px; font-size:12px; font-weight:600; border:1px solid #2c3a55; color:#e8f0ff; }
+  .pill.ok { background:#0d2a12; border-color:#1f6b34; color:#a9f0bf; }
+  .pill.bad { background:#2a1012; border-color:#6b1f2b; color:#ffb3bd; }
+  .pill.warn{ background:#2a2410; border-color:#6b5a1f; color:#ffe7a3; }
+  .muted { color:var(--muted); font-size:12px; }
+  .desc { font-size:13px; line-height:1.4; color:#d9e6ff; white-space:pre-wrap; }
+  .controls { display:flex; flex-wrap:wrap; gap:8px; }
+  button, select { background:#0f1a2b; color:#e8f0ff; border:1px solid #2c3a55; border-radius:10px; padding:10px 12px; font-size:14px; }
+  button.primary { background:#0b5fff; border-color:#0b5fff; }
+  button.link { background:transparent; border-color:#2c3a55; }
+  .grid-2 { display:grid; gap:12px; grid-template-columns: 1fr 1fr; }
+  .small { font-size:12px; }
+  a { color:#7fb0ff; text-decoration:none; }
+  footer { padding:12px 16px 24px; color:var(--muted); text-align:center; font-size:12px; }
+</style>
+</head>
+<body>
+  <header>
+    <h1>Flag Status</h1>
+    <div class="sub">Live read of federal and Michigan notices. MVP build. API-ready later.</div>
+  </header>
+
+  <main>
+    <section class="card">
+      <h2>Preferences</h2>
+      <div class="controls">
+        <label class="small">Your state:
+          <select id="stateSelect">
+            <option value="MI">Michigan</option>
+            <!-- Add more states later -->
+          </select>
+        </label>
+        <label class="small">Notify:
+          <select id="notifySelect">
+            <option value="none">None</option>
+            <option value="daily">Daily (while app is open)</option>
+            <option value="change">On Change (manual compare)</option>
+          </select>
+        </label>
+        <button id="savePrefs" class="primary">Save</button>
+        <button id="refreshBtn">Refresh now</button>
+      </div>
+      <div class="muted" id="prefNote"></div>
+    </section>
+
+    <div class="row">
+      <section class="card" id="federalCard">
+        <h2>Federal status</h2>
+        <div class="status">
+          <span id="federalPill" class="pill warn">Checking…</span>
+          <span class="muted" id="federalWhen"></span>
+        </div>
+        <div class="desc" id="federalDesc">—</div>
+        <div class="controls" style="margin-top:8px">
+          <button class="link" id="openFederal">Open source</button>
+        </div>
+      </section>
+
+      <section class="card" id="stateCard">
+        <h2>Michigan status</h2>
+        <div class="status">
+          <span id="statePill" class="pill warn">Checking…</span>
+          <span class="muted" id="stateWhen"></span>
+        </div>
+        <div class="desc" id="stateDesc">—</div>
+        <div class="controls" style="margin-top:8px">
+          <button class="link" id="openMichigan">Open source</button>
+          <button class="link" id="manualHalf">Set to Half-staff (manual)</button>
+          <button class="link" id="manualFull">Set to Full-staff (manual)</button>
+        </div>
+      </section>
+    </div>
+
+    <section class="card">
+      <h2>Notes</h2>
+      <div class="desc">
+        This MVP reads public pages via a CORS-safe mirror for parsing. It can’t run background notifications when closed. 
+        Add to Home Screen for quick checks. Later swap sources to official APIs or your own webhook.
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    Sources: White House presidential actions and Michigan Flag Honors pages. See source buttons above.
+  </footer>
+
+<script>
+/* ------------------------ Config ------------------------ */
+const SOURCES = {
+  federalRaw: "https://www.whitehouse.gov/presidential-actions/",
+  federal: "https://r.jina.ai/http://www.whitehouse.gov/presidential-actions/",
+  michiganRaw: "https://www.michigan.gov/whitmer/news/flag-honors",
+  michigan: "https://r.jina.ai/http://www.michigan.gov/whitmer/news/flag-honors"
+};
+const LS_KEYS = {
+  prefs: "flagapp_prefs",
+  lastFederalHash: "flagapp_last_federal_hash",
+  lastStateHash: "flagapp_last_state_hash"
+};
+
+/* ------------------------ Utilities ------------------------ */
+function $(id){ return document.getElementById(id); }
+function trimTo(str, n){
+  if(!str) return "";
+  const s = str.replace(/\s+/g,' ').trim();
+  return s.length>n ? s.slice(0,n-1)+"…" : s;
+}
+async function fetchText(url){
+  const res = await fetch(url, { headers: { "Accept":"text/plain" }});
+  if(!res.ok) throw new Error("HTTP "+res.status);
+  return res.text();
+}
+function hash(str){
+  let h = 0, i = 0, len = str.length|0;
+  while(i<len){ h = (h*31 + str.charCodeAt(i++)) | 0; }
+  return String(h);
+}
+function extractFirstDateRange(text){
+  // naive grab of “through …”, “until …”, or explicit dates like Sep 10–14, 2025
+  const lines = text.split('\n').slice(0,400).join(' ');
+  const mA = lines.match(/(through|until)\s+([A-Z][a-z]{2,}\.? \d{1,2}(?:,\s*\d{4})?)/i);
+  const mB = lines.match(/([A-Z][a-z]{2,}\.? \d{1,2})(?:\s*(?:–|-|to)\s*([A-Z][a-z]{2,}\.? \d{1,2}))(?:,\s*(\d{4}))?/);
+  if(mA) return mA[0];
+  if(mB){
+    const yr = mB[3] ? ", "+mB[3] : "";
+    return `${mB[1]} – ${mB[2]}${yr}`;
+  }
+  return "";
+}
+function looksHalfStaff(text){
+  return /half[\s-]?staff/i.test(text);
+}
+
+/* ------------------------ Parsers ------------------------ */
+function parseFederal(raw){
+  // Look for latest block mentioning half-staff
+  const blocks = raw.split('\n\n').filter(b => /president|half[\s-]?staff|proclamation/i.test(b));
+  const candidate = blocks.find(b => looksHalfStaff(b)) || blocks[0] || "";
+  const isHalf = looksHalfStaff(candidate);
+  const windowTxt = extractFirstDateRange(candidate);
+  const desc = trimTo(candidate, 600);
+  return { isHalf, windowTxt, desc, source:SOURCES.federalRaw };
+}
+function parseMichigan(raw){
+  // Pull the “Flag Status in Michigan” section and recent items
+  const blocks = raw.split('\n\n');
+  const firstHalf = blocks.find(b => looksHalfStaff(b)) || "";
+  const isHalf = looksHalfStaff(firstHalf);
+  const windowTxt = extractFirstDateRange(firstHalf);
+  const desc = trimTo(firstHalf || blocks.slice(0,10).join(" "), 600);
+  return { isHalf, windowTxt, desc, source:SOURCES.michiganRaw };
+}
+
+/* ------------------------ UI update ------------------------ */
+function setPill(el, state){
+  el.classList.remove('ok','bad','warn');
+  if(state==="half") { el.classList.add('bad'); el.textContent="Half-staff"; }
+  else if(state==="full"){ el.classList.add('ok'); el.textContent="Full-staff"; }
+  else { el.classList.add('warn'); el.textContent="Unknown"; }
+}
+
+/* ------------------------ Notifications (local) ------------------------ */
+async function ensurePermission(){
+  if(!("Notification" in window)) return false;
+  if(Notification.permission==="granted") return true;
+  if(Notification.permission==="denied") return false;
+  const perm = await Notification.requestPermission();
+  return perm==="granted";
+}
+function notify(title, body){
+  if(!("Notification" in window) || Notification.permission!=="granted") return;
+  new Notification(title, { body });
+}
+
+/* ------------------------ App logic ------------------------ */
+async function refresh(){
+  $("federalPill").textContent = "Checking…";
+  $("statePill").textContent = "Checking…";
+
+  try{
+    const [fedTxt, miTxt] = await Promise.all([
+      fetchText(SOURCES.federal),
+      fetchText(SOURCES.michigan)
+    ]);
+
+    const fed = parseFederal(fedTxt);
+    const mi = parseMichigan(miTxt);
+
+    // Update UI
+    setPill($("federalPill"), fed.isHalf ? "half" : "full");
+    $("federalWhen").textContent = fed.windowTxt || "";
+    $("federalDesc").textContent = fed.desc || "No recent federal text parsed.";
+
+    setPill($("statePill"), mi.isHalf ? "half" : "full");
+    $("stateWhen").textContent = mi.windowTxt || "";
+    $("stateDesc").textContent = mi.desc || "No recent Michigan text parsed.";
+
+    // Change notifications (simple hash compare)
+    const fedHash = hash(String(fed.isHalf)+fed.windowTxt);
+    const miHash  = hash(String(mi.isHalf)+mi.windowTxt);
+    const lastFed = localStorage.getItem(LS_KEYS.lastFederalHash);
+    const lastMI  = localStorage.getItem(LS_KEYS.lastStateHash);
+
+    const prefs = JSON.parse(localStorage.getItem(LS_KEYS.prefs)||"{}");
+    if(prefs.notify==="change"){
+      if(lastFed && lastFed!==fedHash){
+        notify("Federal flag status changed", fed.isHalf ? "Now Half-staff" : "Now Full-staff");
+      }
+      if(lastMI && lastMI!==miHash){
+        notify("Michigan flag status changed", mi.isHalf ? "Now Half-staff" : "Now Full-staff");
+      }
+    }
+
+    localStorage.setItem(LS_KEYS.lastFederalHash, fedHash);
+    localStorage.setItem(LS_KEYS.lastStateHash, miHash);
+
+  }catch(err){
+    setPill($("federalPill"), "unknown");
+    setPill($("statePill"), "unknown");
+    $("federalDesc").textContent = "Fetch error: "+err.message;
+    $("stateDesc").textContent = "Fetch error: "+err.message;
+  }
+}
+
+function loadPrefs(){
+  const p = JSON.parse(localStorage.getItem(LS_KEYS.prefs)||"{}");
+  if(p.state) $("stateSelect").value = p.state;
+  if(p.notify) $("notifySelect").value = p.notify;
+  $("prefNote").textContent = p.savedAt ? `Saved · ${new Date(p.savedAt).toLocaleString()}` : "Not saved yet.";
+}
+
+function savePrefs(){
+  const prefs = {
+    state: $("stateSelect").value,
+    notify: $("notifySelect").value,
+    savedAt: Date.now()
+  };
+  localStorage.setItem(LS_KEYS.prefs, JSON.stringify(prefs));
+  $("prefNote").textContent = `Saved · ${new Date(prefs.savedAt).toLocaleString()}`;
+  if(prefs.notify!=="none"){
+    ensurePermission().then(granted=>{
+      if(!granted) $("prefNote").textContent += " · Notifications blocked";
+    });
+  }
+}
+
+/* simple “daily” reminder while page is open */
+let dailyTimer = null;
+function applyNotifyMode(){
+  const prefs = JSON.parse(localStorage.getItem(LS_KEYS.prefs)||"{}");
+  if(dailyTimer){ clearInterval(dailyTimer); dailyTimer=null; }
+  if(prefs.notify==="daily"){
+    // ping every 24h while open
+    dailyTimer = setInterval(()=>notify("Daily flag check", "Open the app to refresh status"), 24*60*60*1000);
+  }
+}
+
+/* ------------------------ Wire up ------------------------ */
+$("savePrefs").addEventListener("click", ()=>{ savePrefs(); applyNotifyMode(); });
+$("refreshBtn").addEventListener("click", refresh);
+$("openFederal").addEventListener("click", ()=> window.open(SOURCES.federalRaw, "_blank"));
+$("openMichigan").addEventListener("click", ()=> window.open(SOURCES.michiganRaw, "_blank"));
+
+$("manualHalf").addEventListener("click", ()=>{
+  setPill($("statePill"), "half");
+  $("stateWhen").textContent = "Manual override";
+  $("stateDesc").textContent = "Manually set to Half-staff for testing. Replace with API feed later.";
+});
+$("manualFull").addEventListener("click", ()=>{
+  setPill($("statePill"), "full");
+  $("stateWhen").textContent = "Manual override";
+  $("stateDesc").textContent = "Manually set to Full-staff for testing. Replace with API feed later.";
+});
+
+loadPrefs();
+applyNotifyMode();
+refresh();
+</script>
+</body>
+</html>
